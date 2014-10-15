@@ -6,6 +6,7 @@
 #include <iostream>
 #include <cstdlib>
 #include <cstdio>
+#include <vector>
 #include "Galois/Galois.h"
 #include "Galois/Graph/LCGraph.h"
 #include "Galois/Statistic.h"
@@ -44,7 +45,6 @@ double* multiply(Graph* g_ptr, double* x) {
 }
 
 void evaluate_multiplication(Graph* g_ptr) {
-//	double t;
 	int n_nodes = g_ptr->size();
 
 	// Perform sparse matrix-vector multiplication:
@@ -116,6 +116,11 @@ double* add_vecs(Graph* g_ptr, double* Adr, double vr) {
 	return y;
 }
 
+bool sort_pair(const pair<double, int>& l, const pair<double, int>& r) {
+	return (l.first > r.first);
+}
+
+
 int main(int argc, char *argv[]) {
 	char * path_to_sparse = argv[1];
 	Graph g;
@@ -125,7 +130,7 @@ int main(int argc, char *argv[]) {
 
 	// -------------- Problem 2, part b ----------------------------------
 	Graph* g_ptr = &g;
-//	evaluate_multiplication(g_ptr);
+	evaluate_multiplication(g_ptr);
 
 	// -------------- Problem 3, part b ----------------------------------
 	Galois::setActiveThreads(N_THREADS);
@@ -145,7 +150,7 @@ int main(int argc, char *argv[]) {
 	// Step 1: initialize r:
 	double* r;
 	r = (double*) malloc(n_nodes*sizeof(double*));
-	double r0 = 1/n_nodes;
+	double r0 = 1.0/n_nodes;
 	for (int i = 0; i < n_nodes; ++i) {
 		r[i] = r0;
 	}
@@ -155,30 +160,43 @@ int main(int argc, char *argv[]) {
 		// Calculate dr = (1-alpha)*D_inv*r_t:
 		double* dr;
 		dr = multiply_vec(g_ptr, d, r);
-		// Multiply A*dr:
+
+		// Multiply A*dr: - O(nnz(A))
 		double* Adr;
 		Adr = multiply(g_ptr, dr);
 		free(dr);
 
-		// Get sum of r vector, multiply by alpha/n_nodes
+		// Get sum of r vector, multiply by alpha/n_nodes - O(n)
 		double sum = 0;
 		for (int i = 0; i < n_nodes; ++i) {
 			sum += r[i];
 		}
 		double vr = sum*ALPHA/n_nodes;
 
-		// Add vr to every elem in Adr:
+		// Add vr to every elem in Adr: - O(n)
 		double* r_new;
 		r_new = add_vecs(g_ptr, Adr, vr);
 		free(Adr);
 		free(r);
 		r = r_new;
+
 	}
 	totalTime.stop();
 
+
 	// -------------- Problem 3, part b ----------------------------------
-
-
+	vector<pair<double, int> > nodes;
+	nodes.reserve(n_nodes);
+	for(int i = 0; i < n_nodes; ++i) {
+		nodes.push_back(make_pair(r[i], i));
+	}
+	sort(nodes.begin(), nodes.end(), sort_pair);
+	int rank = 1;
+	for(vector<pair<double, int> >::iterator it = nodes.begin(); it != nodes.begin()+10; ++it) {
+		pair<double, int> p = *it;
+		printf("Rank %d: Node %d, PageRank value = %f\n", rank, p.second+1, p.first);
+		++rank;
+	}
 
 	free(r);
 }
