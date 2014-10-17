@@ -46,8 +46,7 @@ int main(int argc, char *argv[]) {
 	// X[i][j].first = feature index for jth pair in x_i; X[i][j].second = corresponding value
 	vector<vector<pair<int, double> > > X_test;
 	X_test.reserve(n_test);
-	vector<int> y_test;
-	y_test.reserve(n_test);
+	vector<int> y_test (n_test, 0);
 
 	// Second pass - store the data in X_test and y_test; keep track of max feature index in X
 	ifstream testFile(testing_data_path);
@@ -60,6 +59,9 @@ int main(int argc, char *argv[]) {
 		char * pch;
 		pch = strtok(l_test, " :");
 		y_test[data_idx] = atoi(pch);
+		// make temp vector for X_test[data_idx]:
+		vector<pair<int, double> > temp_vec;
+
 		int p = 0;
 		pch = strtok(NULL, " :");
 		while (pch != NULL) {
@@ -70,11 +72,12 @@ int main(int argc, char *argv[]) {
 			}
 			else {
 				value = atof(pch);
-				X_test[data_idx].push_back(make_pair(feature_idx-1, value)); // have to make feature indices 0-based
+				temp_vec.push_back(make_pair(feature_idx-1, value)); // have to make feature indices 0-based
 				p = 0;
 			}
 			pch = strtok(NULL, " :");
 		}
+		X_test.push_back(temp_vec);
 		data_idx++;
 	}
 	testFile.close();
@@ -92,8 +95,7 @@ int main(int argc, char *argv[]) {
 
 	vector<vector<pair<int, double> > > X_train;
 	X_train.reserve(n_train);
-	vector<int> y_train;
-	y_train.reserve(n_train);
+	vector<int> y_train (n_train, 0);
 
 	// Second pass - store the data in X_train and y_train; keep track of max feature index in X
 	ifstream trainFile(training_data_path);
@@ -103,6 +105,9 @@ int main(int argc, char *argv[]) {
 		char * pch;
 		pch = strtok(l_train, " :");
 		y_train[data_idx] = atoi(pch);
+		// make temp vector for X_train[data_idx]:
+		vector<pair<int, double> > temp_vec;
+
 		int p = 0;
 		pch = strtok(NULL, " :");
 		while (pch != NULL) {
@@ -113,11 +118,12 @@ int main(int argc, char *argv[]) {
 			}
 			else {
 				value = atof(pch);
-				X_train[data_idx].push_back(make_pair(feature_idx-1, value)); // have to make feature indices 0-based
+				temp_vec.push_back(make_pair(feature_idx-1, value)); // have to make feature indices 0-based
 				p = 0;
 			}
 			pch = strtok(NULL, " :");
 		}
+		X_train.push_back(temp_vec);
 		data_idx++;
 	}
 	trainFile.close();
@@ -126,6 +132,12 @@ int main(int argc, char *argv[]) {
 	vector<double> alpha (n_train, 0);
 	vector<double> w (d, 0);
 
+	vector<int> pi;
+	pi.reserve(n_train);
+	for (int i = 0; i < n_train; i++) {
+		pi.push_back(i);
+	}
+
 	printf("Time to read in data and do pre-processing = %f\n", omp_get_wtime() - t);
 
 	// Start CD iterations
@@ -133,11 +145,6 @@ int main(int argc, char *argv[]) {
 		printf("Starting iteration %d\n", iteration);
 		t = omp_get_wtime();
 		// Choose a random permutation pi of the n data points
-		vector<int> pi;
-		pi.reserve(n_train);
-		for (int i = 0; i < n_train; i++) {
-			pi[i] = i;
-		}
 		random_shuffle(pi.begin(), pi.end());
 
 		#pragma omp parallel num_threads(n_threads) default(shared)
@@ -151,29 +158,28 @@ int main(int argc, char *argv[]) {
 				double y_i = y_train[i];
 				double x_iTw = 0;
 				double Qii = 0;
-				int feature_idx;
+				int f_idx;
 				for (int j = 0; j < X_train[i].size(); j++) {
-					feature_idx = X_train[i][j].first;
-					x_iTw += X_train[i][j].second * w[feature_idx];
-					Qii += X_train[i][j].second * X_train[i][j].second; // TODO replace with square?
+					f_idx = X_train[i][j].first;
+					x_iTw += X_train[i][j].second * w[f_idx];
+					Qii += X_train[i][j].second * X_train[i][j].second;
 				}
-				Qii *= y_i*y_i; // TODO replace with square?
 				double new_alpha_i = alpha_i + (1-y_i*x_iTw - halfC*alpha_i)/(Qii+halfC);
 				new_alpha_i = max(new_alpha_i, 0.0);
-				new_alpha_i = min(new_alpha_i, C);
 				delta = new_alpha_i - alpha_i;
 
 				// update alpha_i:
 				alpha[i] = new_alpha_i;
 
-				// update w:
-//				#pragma omp critical
-//				{
+				double y_id = y_i*delta;
+
+				if (y_id != 0) {
 					for (int j = 0; j < X_train[i].size(); j++) {
-						feature_idx = X_train[i][j].first;
-						w[feature_idx] += y_i * delta * X_train[i][j].second;
+						f_idx = X_train[i][j].first;
+						#pragma omp atomic
+						w[f_idx] += y_id * X_train[i][j].second;
 					}
-//				}
+				}
 			}
 		}
 		total_time += omp_get_wtime() - t;
@@ -185,17 +191,17 @@ int main(int argc, char *argv[]) {
 		double f, w2norm, alpha2norm, alpha1norm;
 		w2norm = 0;
 		for (int i = 0; i < d; i++) {
-			w2norm += w[i]*w[i]; // TODO replace with square?
+			w2norm += w[i]*w[i];
 		}
 		alpha2norm = 0;
 		alpha1norm = 0;
 		double Xi_i;
 		double hinge = 0;
-		for (int i = 1; i < n_train; i++) {
+		for (int i = 0; i < n_train; i++) {
 			alpha2norm += alpha[i]*alpha[i];
 			alpha1norm += alpha[i];
 			double wTx_i = 0;
-			for (int j = 1; j < X_train[i].size(); j++) {
+			for (int j = 0; j < X_train[i].size(); j++) {
 				feature_idx = X_train[i][j].first;
 				wTx_i += w[feature_idx]*X_train[i][j].second;
 			}
@@ -248,8 +254,8 @@ int main(int argc, char *argv[]) {
 		printf("Part e: Calculated value is %f\n", diff_norm);
 
 		// Part g: Calculate relative error: (g(w) - g(w*))/g(w*)
-		double g_w_opt = 6904.593540;
-//		double g_w_opt = 863563.16;
+//		double g_w_opt = 6310.587335;
+		double g_w_opt = 33346.944104;
 		double rel_error = (g - g_w_opt)/g_w_opt;
 		printf("Part g: Relative error = %f\n", rel_error);
 	}
